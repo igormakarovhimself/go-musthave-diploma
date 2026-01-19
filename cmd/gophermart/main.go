@@ -11,6 +11,7 @@ import (
 	"go-musthave-diploma/internal/app"
 	"go-musthave-diploma/internal/config"
 	"go-musthave-diploma/internal/logger"
+	"go-musthave-diploma/internal/storage"
 )
 
 func main() {
@@ -30,11 +31,19 @@ func run() error {
 	}
 	defer logger.Log.Sync()
 
+	db, err := storage.InitDB(cfg.DatabaseURI)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+
+	userRepo := storage.NewPostgresStorage(db)
+
 	logger.Log.Infow("Starting Gophermart",
 		"address", cfg.RunAddress,
 	)
 
-	router := app.NewRouter()
+	router := app.NewRouter(userRepo, cfg.JWTSecret)
 
 	srv := &http.Server{
 		Addr:    cfg.RunAddress,
