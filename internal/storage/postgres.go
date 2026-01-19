@@ -51,3 +51,43 @@ func (s *PostgresStorage) GetUserByLogin(ctx context.Context, login string) (*mo
 
 	return &user, nil
 }
+
+func (s *PostgresStorage) GetOrderByNumber(ctx context.Context, orderNumber string) (*models.Order, error) {
+	query := `SELECT number, user_id, status, accrual, uploaded_at FROM orders WHERE number = $1`
+
+	var order models.Order
+	err := s.db.GetContext(ctx, &order, query, orderNumber)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ErrOrderNotFound
+		}
+		return nil, fmt.Errorf("failed to get order: %w", err)
+	}
+
+	return &order, nil
+}
+
+func (s *PostgresStorage) CreateOrder(ctx context.Context, userID int64, orderNumber string) (*models.Order, error) {
+	existing, err := s.GetOrderByNumber(ctx, orderNumber)
+	if err == nil {
+		if existing.UserID == userID {
+			return existing, ErrOrderExistsSameUser
+		}
+		return nil, ErrOrderExistsOtherUser
+	}
+	if !errors.Is(err, ErrOrderNotFound) {
+		return nil, err
+	}
+
+	query := `INSERT INTO orders (number, user_id, status, uploaded_at)
+		VALUES ($1, $2, $3, NOW())
+		RETURNING number, user_id, status, accrual, uploaded_at`
+
+	var order models.Order
+	err = s.db.QueryRowxContext(ctx, query, orderNumber, userID, models.OrderStatusNew).StructScan(&order)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create order: %w", err)
+	}
+
+	return &order, nil
+}

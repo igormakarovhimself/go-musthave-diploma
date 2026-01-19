@@ -37,13 +37,13 @@ func run() error {
 	}
 	defer db.Close()
 
-	userRepo := storage.NewPostgresStorage(db)
+	store := storage.NewPostgresStorage(db)
 
 	logger.Log.Infow("Starting Gophermart",
 		"address", cfg.RunAddress,
 	)
 
-	router := app.NewRouter(userRepo, cfg.JWTSecret)
+	router := app.NewRouter(store, store, cfg.JWTSecret)
 
 	srv := &http.Server{
 		Addr:    cfg.RunAddress,

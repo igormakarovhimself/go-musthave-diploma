@@ -7,9 +7,11 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"go-musthave-diploma/internal/auth"
 	"go-musthave-diploma/internal/logger"
+	"go-musthave-diploma/internal/middleware"
 	"go-musthave-diploma/internal/models"
 	"go-musthave-diploma/internal/storage"
 )
@@ -49,9 +51,47 @@ func (m *mockUserRepo) GetUserByLogin(ctx context.Context, login string) (*model
 	return user, nil
 }
 
+type mockOrderRepo struct {
+	orders map[string]*models.Order
+}
+
+func newMockOrderRepo() *mockOrderRepo {
+	return &mockOrderRepo{
+		orders: make(map[string]*models.Order),
+	}
+}
+
+func (m *mockOrderRepo) CreateOrder(ctx context.Context, userID int64, orderNumber string) (*models.Order, error) {
+	existing, ok := m.orders[orderNumber]
+	if ok {
+		if existing.UserID == userID {
+			return existing, storage.ErrOrderExistsSameUser
+		}
+		return nil, storage.ErrOrderExistsOtherUser
+	}
+
+	order := &models.Order{
+		Number:     orderNumber,
+		UserID:     userID,
+		Status:     models.OrderStatusNew,
+		UploadedAt: time.Now(),
+	}
+	m.orders[orderNumber] = order
+	return order, nil
+}
+
+func (m *mockOrderRepo) GetOrderByNumber(ctx context.Context, orderNumber string) (*models.Order, error) {
+	order, exists := m.orders[orderNumber]
+	if !exists {
+		return nil, storage.ErrOrderNotFound
+	}
+	return order, nil
+}
+
 func TestRegister(t *testing.T) {
 	repo := newMockUserRepo()
-	h := NewHandler(repo, "test-secret")
+	orderRepo := newMockOrderRepo()
+	h := NewHandler(repo, orderRepo, "test-secret")
 
 	tests := []struct {
 		name       string
@@ -121,7 +161,8 @@ func TestRegister(t *testing.T) {
 
 func TestLogin(t *testing.T) {
 	repo := newMockUserRepo()
-	h := NewHandler(repo, "test-secret")
+	orderRepo := newMockOrderRepo()
+	h := NewHandler(repo, orderRepo, "test-secret")
 
 	hash, _ := auth.HashPassword("correctpass")
 	repo.CreateUser(context.Background(), "existinguser", hash)
@@ -190,8 +231,18 @@ func (e *errorUserRepo) GetUserByLogin(ctx context.Context, login string) (*mode
 	return nil, errors.New("database error")
 }
 
+type errorOrderRepo struct{}
+
+func (e *errorOrderRepo) CreateOrder(ctx context.Context, userID int64, orderNumber string) (*models.Order, error) {
+	return nil, errors.New("database error")
+}
+
+func (e *errorOrderRepo) GetOrderByNumber(ctx context.Context, orderNumber string) (*models.Order, error) {
+	return nil, errors.New("database error")
+}
+
 func TestRegister_DatabaseError(t *testing.T) {
-	h := NewHandler(&errorUserRepo{}, "test-secret")
+	h := NewHandler(&errorUserRepo{}, &errorOrderRepo{}, "test-secret")
 
 	req := httptest.NewRequest(http.MethodPost, "/api/user/register", strings.NewReader(`{"login":"test","password":"pass"}`))
 	req.Header.Set("Content-Type", "application/json")
@@ -205,7 +256,7 @@ func TestRegister_DatabaseError(t *testing.T) {
 }
 
 func TestLogin_DatabaseError(t *testing.T) {
-	h := NewHandler(&errorUserRepo{}, "test-secret")
+	h := NewHandler(&errorUserRepo{}, &errorOrderRepo{}, "test-secret")
 
 	req := httptest.NewRequest(http.MethodPost, "/api/user/login", strings.NewReader(`{"login":"test","password":"pass"}`))
 	req.Header.Set("Content-Type", "application/json")
@@ -215,5 +266,85 @@ func TestLogin_DatabaseError(t *testing.T) {
 
 	if w.Code != http.StatusInternalServerError {
 		t.Errorf("Expected status %d, got %d", http.StatusInternalServerError, w.Code)
+	}
+}
+
+func TestUploadOrder(t *testing.T) {
+	userRepo := newMockUserRepo()
+	orderRepo := newMockOrderRepo()
+	h := NewHandler(userRepo, orderRepo, "test-secret")
+
+	tests := []struct {
+		name       string
+		body       string
+		userID     int64
+		wantStatus int
+		setupRepo  func()
+	}{
+		{
+			name:       "new order accepted",
+			body:       "12345678903",
+			userID:     1,
+			wantStatus: http.StatusAccepted,
+			setupRepo:  func() {},
+		},
+		{
+			name:       "order already uploaded by same user",
+			body:       "79927398713",
+			userID:     1,
+			wantStatus: http.StatusOK,
+			setupRepo: func() {
+				orderRepo.CreateOrder(context.Background(), 1, "79927398713")
+			},
+		},
+		{
+			name:       "order already uploaded by other user",
+			body:       "4532015112830366",
+			userID:     2,
+			wantStatus: http.StatusConflict,
+			setupRepo: func() {
+				orderRepo.CreateOrder(context.Background(), 1, "4532015112830366")
+			},
+		},
+		{
+			name:       "invalid luhn checksum",
+			body:       "12345678904",
+			userID:     1,
+			wantStatus: http.StatusUnprocessableEntity,
+			setupRepo:  func() {},
+		},
+		{
+			name:       "empty body",
+			body:       "",
+			userID:     1,
+			wantStatus: http.StatusBadRequest,
+			setupRepo:  func() {},
+		},
+		{
+			name:       "order with spaces",
+			body:       "1234 5678 903",
+			userID:     1,
+			wantStatus: http.StatusAccepted,
+			setupRepo:  func() {},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			orderRepo.orders = make(map[string]*models.Order)
+			tt.setupRepo()
+
+			req := httptest.NewRequest(http.MethodPost, "/api/user/orders", strings.NewReader(tt.body))
+			req.Header.Set("Content-Type", "text/plain")
+			ctx := context.WithValue(req.Context(), middleware.UserIDKey, tt.userID)
+			req = req.WithContext(ctx)
+			w := httptest.NewRecorder()
+
+			h.UploadOrder(w, req)
+
+			if w.Code != tt.wantStatus {
+				t.Errorf("UploadOrder() status = %d, want %d, body: %s", w.Code, tt.wantStatus, w.Body.String())
+			}
+		})
 	}
 }

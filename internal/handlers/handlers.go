@@ -3,21 +3,27 @@ package handlers
 import (
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
+	"strings"
 
 	"go-musthave-diploma/internal/auth"
 	"go-musthave-diploma/internal/logger"
+	"go-musthave-diploma/internal/luhn"
+	"go-musthave-diploma/internal/middleware"
 	"go-musthave-diploma/internal/storage"
 )
 
 type Handler struct {
 	userRepo  storage.UserRepository
+	orderRepo storage.OrderRepository
 	jwtSecret string
 }
 
-func NewHandler(userRepo storage.UserRepository, jwtSecret string) *Handler {
+func NewHandler(userRepo storage.UserRepository, orderRepo storage.OrderRepository, jwtSecret string) *Handler {
 	return &Handler{
 		userRepo:  userRepo,
+		orderRepo: orderRepo,
 		jwtSecret: jwtSecret,
 	}
 }
@@ -66,6 +72,51 @@ func (h *Handler) Register(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Authorization", "Bearer "+token)
 	w.WriteHeader(http.StatusOK)
+}
+
+func (h *Handler) UploadOrder(w http.ResponseWriter, r *http.Request) {
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		http.Error(w, "invalid request", http.StatusBadRequest)
+		return
+	}
+
+	orderNumber := strings.TrimSpace(string(body))
+
+	if orderNumber == "" {
+		http.Error(w, "invalid request", http.StatusBadRequest)
+		return
+	}
+
+	if !luhn.Validate(orderNumber) {
+		http.Error(w, "invalid order number format", http.StatusUnprocessableEntity)
+		return
+	}
+
+	userID, err := middleware.GetUserID(r.Context())
+	if err != nil {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	orderNumber = strings.ReplaceAll(orderNumber, " ", "")
+
+	_, err = h.orderRepo.CreateOrder(r.Context(), userID, orderNumber)
+	if err != nil {
+		if errors.Is(err, storage.ErrOrderExistsSameUser) {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		if errors.Is(err, storage.ErrOrderExistsOtherUser) {
+			http.Error(w, "order already uploaded by another user", http.StatusConflict)
+			return
+		}
+		logger.Log.Error("failed to create order", "error", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusAccepted)
 }
 
 func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {

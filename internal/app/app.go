@@ -10,16 +10,18 @@ import (
 	"github.com/go-chi/chi/v5"
 )
 
-func NewRouter(userRepo storage.UserRepository, jwtSecret string) http.Handler {
+func NewRouter(userRepo storage.UserRepository, orderRepo storage.OrderRepository, jwtSecret string) http.Handler {
 	r := chi.NewRouter()
 
 	r.Use(middleware.Logger)
 	r.Use(middleware.GzipHandle)
 
-	h := handlers.NewHandler(userRepo, jwtSecret)
+	h := handlers.NewHandler(userRepo, orderRepo, jwtSecret)
 
 	r.Post("/api/user/register", h.Register)
 	r.Post("/api/user/login", h.Login)
+
+	r.With(middleware.Auth(jwtSecret)).Post("/api/user/orders", h.UploadOrder)
 
 	return r
 }

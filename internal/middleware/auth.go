@@ -11,7 +11,7 @@ import (
 
 type contextKey string
 
-const userIDKey contextKey = "userID"
+const UserIDKey contextKey = "userID"
 
 func Auth(jwtSecret string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
@@ -34,14 +34,14 @@ func Auth(jwtSecret string) func(http.Handler) http.Handler {
 				return
 			}
 
-			ctx := context.WithValue(r.Context(), userIDKey, claims.UserID)
+			ctx := context.WithValue(r.Context(), UserIDKey, claims.UserID)
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
 }
 
 func GetUserID(ctx context.Context) (int64, error) {
-	userID, ok := ctx.Value(userIDKey).(int64)
+	userID, ok := ctx.Value(UserIDKey).(int64)
 	if !ok {
 		return 0, errors.New("user id not found in context")
 	}
