@@ -23,4 +23,5 @@ type UserRepository interface {
 type OrderRepository interface {
 	CreateOrder(ctx context.Context, userID int64, orderNumber string) (*models.Order, error)
 	GetOrderByNumber(ctx context.Context, orderNumber string) (*models.Order, error)
+	GetOrdersByUserID(ctx context.Context, userID int64) ([]*models.Order, error)
 }

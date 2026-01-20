@@ -91,3 +91,18 @@ func (s *PostgresStorage) CreateOrder(ctx context.Context, userID int64, orderNu
 
 	return &order, nil
 }
+
+func (s *PostgresStorage) GetOrdersByUserID(ctx context.Context, userID int64) ([]*models.Order, error) {
+	query := `SELECT number, user_id, status, accrual, uploaded_at 
+		FROM orders 
+		WHERE user_id = $1 
+		ORDER BY uploaded_at DESC`
+
+	var orders []*models.Order
+	err := s.db.SelectContext(ctx, &orders, query, userID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get orders: %w", err)
+	}
+
+	return orders, nil
+}

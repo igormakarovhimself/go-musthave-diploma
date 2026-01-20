@@ -88,6 +88,24 @@ func (m *mockOrderRepo) GetOrderByNumber(ctx context.Context, orderNumber string
 	return order, nil
 }
 
+func (m *mockOrderRepo) GetOrdersByUserID(ctx context.Context, userID int64) ([]*models.Order, error) {
+	var result []*models.Order
+	for _, order := range m.orders {
+		if order.UserID == userID {
+			result = append(result, order)
+		}
+	}
+
+	for i := 0; i < len(result)-1; i++ {
+		for j := i + 1; j < len(result); j++ {
+			if result[i].UploadedAt.Before(result[j].UploadedAt) {
+				result[i], result[j] = result[j], result[i]
+			}
+		}
+	}
+	return result, nil
+}
+
 func TestRegister(t *testing.T) {
 	repo := newMockUserRepo()
 	orderRepo := newMockOrderRepo()
@@ -241,6 +259,10 @@ func (e *errorOrderRepo) GetOrderByNumber(ctx context.Context, orderNumber strin
 	return nil, errors.New("database error")
 }
 
+func (e *errorOrderRepo) GetOrdersByUserID(ctx context.Context, userID int64) ([]*models.Order, error) {
+	return nil, errors.New("database error")
+}
+
 func TestRegister_DatabaseError(t *testing.T) {
 	h := NewHandler(&errorUserRepo{}, &errorOrderRepo{}, "test-secret")
 
@@ -346,5 +368,102 @@ func TestUploadOrder(t *testing.T) {
 				t.Errorf("UploadOrder() status = %d, want %d, body: %s", w.Code, tt.wantStatus, w.Body.String())
 			}
 		})
+	}
+}
+
+func TestGetOrders(t *testing.T) {
+	userRepo := newMockUserRepo()
+	orderRepo := newMockOrderRepo()
+	h := NewHandler(userRepo, orderRepo, "test-secret")
+
+	tests := []struct {
+		name          string
+		userID        int64
+		wantStatus    int
+		wantOrdersNum int
+		setupRepo     func()
+	}{
+		{
+			name:          "no orders",
+			userID:        1,
+			wantStatus:    http.StatusNoContent,
+			wantOrdersNum: 0,
+			setupRepo:     func() {},
+		},
+		{
+			name:          "multiple orders sorted by time",
+			userID:        1,
+			wantStatus:    http.StatusOK,
+			wantOrdersNum: 3,
+			setupRepo: func() {
+				time.Sleep(1 * time.Millisecond)
+				orderRepo.CreateOrder(context.Background(), 1, "12345678903")
+				time.Sleep(1 * time.Millisecond)
+				orderRepo.CreateOrder(context.Background(), 1, "79927398713")
+				time.Sleep(1 * time.Millisecond)
+				orderRepo.CreateOrder(context.Background(), 1, "4532015112830366")
+			},
+		},
+		{
+			name:          "only current user orders",
+			userID:        2,
+			wantStatus:    http.StatusOK,
+			wantOrdersNum: 1,
+			setupRepo: func() {
+				orderRepo.CreateOrder(context.Background(), 1, "12345678903")
+				orderRepo.CreateOrder(context.Background(), 2, "79927398713")
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			orderRepo.orders = make(map[string]*models.Order)
+			tt.setupRepo()
+
+			req := httptest.NewRequest(http.MethodGet, "/api/user/orders", nil)
+			ctx := context.WithValue(req.Context(), middleware.UserIDKey, tt.userID)
+			req = req.WithContext(ctx)
+			w := httptest.NewRecorder()
+
+			h.GetOrders(w, req)
+
+			if w.Code != tt.wantStatus {
+				t.Errorf("GetOrders() status = %d, want %d", w.Code, tt.wantStatus)
+			}
+
+			if tt.wantStatus == http.StatusOK {
+				contentType := w.Header().Get("Content-Type")
+				if contentType != "application/json" {
+					t.Errorf("GetOrders() Content-Type = %s, want application/json", contentType)
+				}
+
+				body := w.Body.String()
+				if body == "" {
+					t.Error("GetOrders() returned empty body for status 200")
+				}
+			}
+
+			if tt.wantStatus == http.StatusNoContent {
+				if w.Body.Len() != 0 {
+					t.Errorf("GetOrders() body should be empty for 204, got: %s", w.Body.String())
+				}
+			}
+		})
+	}
+}
+
+func TestGetOrders_DatabaseError(t *testing.T) {
+	h := NewHandler(&errorUserRepo{}, &errorOrderRepo{}, "test-secret")
+
+	req := httptest.NewRequest(http.MethodGet, "/api/user/orders", nil)
+	ctx := context.WithValue(req.Context(), middleware.UserIDKey, int64(1))
+	req = req.WithContext(ctx)
+	w := httptest.NewRecorder()
+
+	h.GetOrders(w, req)
+
+	if w.Code != http.StatusInternalServerError {
+		t.Errorf("Expected status %d, got %d", http.StatusInternalServerError, w.Code)
 	}
 }

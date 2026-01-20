@@ -22,6 +22,7 @@ func NewRouter(userRepo storage.UserRepository, orderRepo storage.OrderRepositor
 	r.Post("/api/user/login", h.Login)
 
 	r.With(middleware.Auth(jwtSecret)).Post("/api/user/orders", h.UploadOrder)
+	r.With(middleware.Auth(jwtSecret)).Get("/api/user/orders", h.GetOrders)
 
 	return r
 }
