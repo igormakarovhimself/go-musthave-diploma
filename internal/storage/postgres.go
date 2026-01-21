@@ -9,6 +9,7 @@ import (
 	"github.com/jackc/pgerrcode"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jmoiron/sqlx"
+	"github.com/shopspring/decimal"
 
 	"go-musthave-diploma/internal/models"
 )
@@ -105,4 +106,46 @@ func (s *PostgresStorage) GetOrdersByUserID(ctx context.Context, userID int64) (
 	}
 
 	return orders, nil
+}
+
+func (s *PostgresStorage) GetBalance(ctx context.Context, userID int64) (*models.Balance, error) {
+	query := `
+		SELECT 
+			COALESCE(SUM(CASE WHEN status = 'PROCESSED' THEN accrual ELSE 0 END), 0) as total_accrual,
+			COALESCE((SELECT SUM(sum) FROM withdrawals WHERE user_id = $1), 0) as total_withdrawn
+		FROM orders
+		WHERE user_id = $1
+	`
+
+	var result struct {
+		TotalAccrual   sql.NullString `db:"total_accrual"`
+		TotalWithdrawn sql.NullString `db:"total_withdrawn"`
+	}
+
+	err := s.db.GetContext(ctx, &result, query, userID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get balance: %w", err)
+	}
+
+	totalAccrual, err := parseDecimal(result.TotalAccrual)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse total accrual: %w", err)
+	}
+
+	totalWithdrawn, err := parseDecimal(result.TotalWithdrawn)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse total withdrawn: %w", err)
+	}
+
+	return &models.Balance{
+		Current:   totalAccrual.Sub(totalWithdrawn),
+		Withdrawn: totalWithdrawn,
+	}, nil
+}
+
+func parseDecimal(ns sql.NullString) (decimal.Decimal, error) {
+	if !ns.Valid || ns.String == "" {
+		return decimal.Zero, nil
+	}
+	return decimal.NewFromString(ns.String)
 }

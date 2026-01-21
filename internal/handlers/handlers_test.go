@@ -2,12 +2,15 @@ package handlers
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/shopspring/decimal"
 
 	"go-musthave-diploma/internal/auth"
 	"go-musthave-diploma/internal/logger"
@@ -106,10 +109,58 @@ func (m *mockOrderRepo) GetOrdersByUserID(ctx context.Context, userID int64) ([]
 	return result, nil
 }
 
+type mockBalanceRepo struct {
+	balance *models.Balance
+}
+
+func newMockBalanceRepo() *mockBalanceRepo {
+	return &mockBalanceRepo{
+		balance: &models.Balance{
+			Current:   decimal.Zero,
+			Withdrawn: decimal.Zero,
+		},
+	}
+}
+
+func (m *mockBalanceRepo) GetBalance(ctx context.Context, userID int64) (*models.Balance, error) {
+	return m.balance, nil
+}
+
+type errorUserRepo struct{}
+
+func (e *errorUserRepo) CreateUser(ctx context.Context, login, passwordHash string) (*models.User, error) {
+	return nil, errors.New("database error")
+}
+
+func (e *errorUserRepo) GetUserByLogin(ctx context.Context, login string) (*models.User, error) {
+	return nil, errors.New("database error")
+}
+
+type errorOrderRepo struct{}
+
+func (e *errorOrderRepo) CreateOrder(ctx context.Context, userID int64, orderNumber string) (*models.Order, error) {
+	return nil, errors.New("database error")
+}
+
+func (e *errorOrderRepo) GetOrderByNumber(ctx context.Context, orderNumber string) (*models.Order, error) {
+	return nil, errors.New("database error")
+}
+
+func (e *errorOrderRepo) GetOrdersByUserID(ctx context.Context, userID int64) ([]*models.Order, error) {
+	return nil, errors.New("database error")
+}
+
+type errorBalanceRepo struct{}
+
+func (e *errorBalanceRepo) GetBalance(ctx context.Context, userID int64) (*models.Balance, error) {
+	return nil, errors.New("database error")
+}
+
 func TestRegister(t *testing.T) {
 	repo := newMockUserRepo()
 	orderRepo := newMockOrderRepo()
-	h := NewHandler(repo, orderRepo, "test-secret")
+	balanceRepo := newMockBalanceRepo()
+	h := NewHandler(repo, orderRepo, balanceRepo, "test-secret")
 
 	tests := []struct {
 		name       string
@@ -180,7 +231,8 @@ func TestRegister(t *testing.T) {
 func TestLogin(t *testing.T) {
 	repo := newMockUserRepo()
 	orderRepo := newMockOrderRepo()
-	h := NewHandler(repo, orderRepo, "test-secret")
+	balanceRepo := newMockBalanceRepo()
+	h := NewHandler(repo, orderRepo, balanceRepo, "test-secret")
 
 	hash, _ := auth.HashPassword("correctpass")
 	repo.CreateUser(context.Background(), "existinguser", hash)
@@ -239,32 +291,8 @@ func TestLogin(t *testing.T) {
 	}
 }
 
-type errorUserRepo struct{}
-
-func (e *errorUserRepo) CreateUser(ctx context.Context, login, passwordHash string) (*models.User, error) {
-	return nil, errors.New("database error")
-}
-
-func (e *errorUserRepo) GetUserByLogin(ctx context.Context, login string) (*models.User, error) {
-	return nil, errors.New("database error")
-}
-
-type errorOrderRepo struct{}
-
-func (e *errorOrderRepo) CreateOrder(ctx context.Context, userID int64, orderNumber string) (*models.Order, error) {
-	return nil, errors.New("database error")
-}
-
-func (e *errorOrderRepo) GetOrderByNumber(ctx context.Context, orderNumber string) (*models.Order, error) {
-	return nil, errors.New("database error")
-}
-
-func (e *errorOrderRepo) GetOrdersByUserID(ctx context.Context, userID int64) ([]*models.Order, error) {
-	return nil, errors.New("database error")
-}
-
 func TestRegister_DatabaseError(t *testing.T) {
-	h := NewHandler(&errorUserRepo{}, &errorOrderRepo{}, "test-secret")
+	h := NewHandler(&errorUserRepo{}, &errorOrderRepo{}, &errorBalanceRepo{}, "test-secret")
 
 	req := httptest.NewRequest(http.MethodPost, "/api/user/register", strings.NewReader(`{"login":"test","password":"pass"}`))
 	req.Header.Set("Content-Type", "application/json")
@@ -278,7 +306,7 @@ func TestRegister_DatabaseError(t *testing.T) {
 }
 
 func TestLogin_DatabaseError(t *testing.T) {
-	h := NewHandler(&errorUserRepo{}, &errorOrderRepo{}, "test-secret")
+	h := NewHandler(&errorUserRepo{}, &errorOrderRepo{}, &errorBalanceRepo{}, "test-secret")
 
 	req := httptest.NewRequest(http.MethodPost, "/api/user/login", strings.NewReader(`{"login":"test","password":"pass"}`))
 	req.Header.Set("Content-Type", "application/json")
@@ -294,7 +322,8 @@ func TestLogin_DatabaseError(t *testing.T) {
 func TestUploadOrder(t *testing.T) {
 	userRepo := newMockUserRepo()
 	orderRepo := newMockOrderRepo()
-	h := NewHandler(userRepo, orderRepo, "test-secret")
+	balanceRepo := newMockBalanceRepo()
+	h := NewHandler(userRepo, orderRepo, balanceRepo, "test-secret")
 
 	tests := []struct {
 		name       string
@@ -374,7 +403,8 @@ func TestUploadOrder(t *testing.T) {
 func TestGetOrders(t *testing.T) {
 	userRepo := newMockUserRepo()
 	orderRepo := newMockOrderRepo()
-	h := NewHandler(userRepo, orderRepo, "test-secret")
+	balanceRepo := newMockBalanceRepo()
+	h := NewHandler(userRepo, orderRepo, balanceRepo, "test-secret")
 
 	tests := []struct {
 		name          string
@@ -454,7 +484,7 @@ func TestGetOrders(t *testing.T) {
 }
 
 func TestGetOrders_DatabaseError(t *testing.T) {
-	h := NewHandler(&errorUserRepo{}, &errorOrderRepo{}, "test-secret")
+	h := NewHandler(&errorUserRepo{}, &errorOrderRepo{}, &errorBalanceRepo{}, "test-secret")
 
 	req := httptest.NewRequest(http.MethodGet, "/api/user/orders", nil)
 	ctx := context.WithValue(req.Context(), middleware.UserIDKey, int64(1))
@@ -462,6 +492,100 @@ func TestGetOrders_DatabaseError(t *testing.T) {
 	w := httptest.NewRecorder()
 
 	h.GetOrders(w, req)
+
+	if w.Code != http.StatusInternalServerError {
+		t.Errorf("Expected status %d, got %d", http.StatusInternalServerError, w.Code)
+	}
+}
+
+func TestGetBalance(t *testing.T) {
+	userRepo := newMockUserRepo()
+	orderRepo := newMockOrderRepo()
+	balanceRepo := newMockBalanceRepo()
+	h := NewHandler(userRepo, orderRepo, balanceRepo, "test-secret")
+
+	tests := []struct {
+		name       string
+		userID     int64
+		balance    *models.Balance
+		wantStatus int
+	}{
+		{
+			name:   "zero balance",
+			userID: 1,
+			balance: &models.Balance{
+				Current:   decimal.Zero,
+				Withdrawn: decimal.Zero,
+			},
+			wantStatus: http.StatusOK,
+		},
+		{
+			name:   "balance with accrual",
+			userID: 1,
+			balance: &models.Balance{
+				Current:   decimal.NewFromFloat(500.5),
+				Withdrawn: decimal.Zero,
+			},
+			wantStatus: http.StatusOK,
+		},
+		{
+			name:   "balance with withdrawals",
+			userID: 1,
+			balance: &models.Balance{
+				Current:   decimal.NewFromFloat(458.5),
+				Withdrawn: decimal.NewFromFloat(42),
+			},
+			wantStatus: http.StatusOK,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			balanceRepo.balance = tt.balance
+
+			req := httptest.NewRequest(http.MethodGet, "/api/user/balance", nil)
+			ctx := context.WithValue(req.Context(), middleware.UserIDKey, tt.userID)
+			req = req.WithContext(ctx)
+			w := httptest.NewRecorder()
+
+			h.GetBalance(w, req)
+
+			if w.Code != tt.wantStatus {
+				t.Errorf("GetBalance() status = %d, want %d", w.Code, tt.wantStatus)
+			}
+
+			if tt.wantStatus == http.StatusOK {
+				contentType := w.Header().Get("Content-Type")
+				if contentType != "application/json" {
+					t.Errorf("GetBalance() Content-Type = %s, want application/json", contentType)
+				}
+
+				var response models.Balance
+				if err := json.NewDecoder(w.Body).Decode(&response); err != nil {
+					t.Errorf("Failed to decode response: %v", err)
+				}
+
+				if !response.Current.Equal(tt.balance.Current) {
+					t.Errorf("GetBalance() current = %s, want %s", response.Current, tt.balance.Current)
+				}
+
+				if !response.Withdrawn.Equal(tt.balance.Withdrawn) {
+					t.Errorf("GetBalance() withdrawn = %s, want %s", response.Withdrawn, tt.balance.Withdrawn)
+				}
+			}
+		})
+	}
+}
+
+func TestGetBalance_DatabaseError(t *testing.T) {
+	h := NewHandler(&errorUserRepo{}, &errorOrderRepo{}, &errorBalanceRepo{}, "test-secret")
+
+	req := httptest.NewRequest(http.MethodGet, "/api/user/balance", nil)
+	ctx := context.WithValue(req.Context(), middleware.UserIDKey, int64(1))
+	req = req.WithContext(ctx)
+	w := httptest.NewRecorder()
+
+	h.GetBalance(w, req)
 
 	if w.Code != http.StatusInternalServerError {
 		t.Errorf("Expected status %d, got %d", http.StatusInternalServerError, w.Code)

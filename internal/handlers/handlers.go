@@ -15,16 +15,18 @@ import (
 )
 
 type Handler struct {
-	userRepo  storage.UserRepository
-	orderRepo storage.OrderRepository
-	jwtSecret string
+	userRepo    storage.UserRepository
+	orderRepo   storage.OrderRepository
+	balanceRepo storage.BalanceRepository
+	jwtSecret   string
 }
 
-func NewHandler(userRepo storage.UserRepository, orderRepo storage.OrderRepository, jwtSecret string) *Handler {
+func NewHandler(userRepo storage.UserRepository, orderRepo storage.OrderRepository, balanceRepo storage.BalanceRepository, jwtSecret string) *Handler {
 	return &Handler{
-		userRepo:  userRepo,
-		orderRepo: orderRepo,
-		jwtSecret: jwtSecret,
+		userRepo:    userRepo,
+		orderRepo:   orderRepo,
+		balanceRepo: balanceRepo,
+		jwtSecret:   jwtSecret,
 	}
 }
 
@@ -179,4 +181,22 @@ func (h *Handler) GetOrders(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(orders)
+}
+
+func (h *Handler) GetBalance(w http.ResponseWriter, r *http.Request) {
+	userID, err := middleware.GetUserID(r.Context())
+	if err != nil {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	balance, err := h.balanceRepo.GetBalance(r.Context(), userID)
+	if err != nil {
+		logger.Log.Error("failed to get balance", "error", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(balance)
 }
