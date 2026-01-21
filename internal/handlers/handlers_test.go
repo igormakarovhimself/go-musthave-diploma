@@ -156,11 +156,70 @@ func (e *errorBalanceRepo) GetBalance(ctx context.Context, userID int64) (*model
 	return nil, errors.New("database error")
 }
 
+type mockWithdrawalRepo struct {
+	withdrawals []*models.Withdrawal
+	balance     decimal.Decimal
+}
+
+func newMockWithdrawalRepo() *mockWithdrawalRepo {
+	return &mockWithdrawalRepo{
+		withdrawals: []*models.Withdrawal{},
+		balance:     decimal.NewFromFloat(1000),
+	}
+}
+
+func (m *mockWithdrawalRepo) CreateWithdrawal(ctx context.Context, userID int64, order string, sum decimal.Decimal) (*models.Withdrawal, error) {
+	if m.balance.LessThan(sum) {
+		return nil, storage.ErrInsufficientFunds
+	}
+	m.balance = m.balance.Sub(sum)
+	withdrawal := &models.Withdrawal{
+		ID:          int64(len(m.withdrawals) + 1),
+		UserID:      userID,
+		Order:       order,
+		Sum:         sum,
+		ProcessedAt: time.Now(),
+	}
+	m.withdrawals = append(m.withdrawals, withdrawal)
+	return withdrawal, nil
+}
+
+func (m *mockWithdrawalRepo) GetWithdrawalsByUserID(ctx context.Context, userID int64) ([]*models.Withdrawal, error) {
+	var result []*models.Withdrawal
+	for _, w := range m.withdrawals {
+		if w.UserID == userID {
+			result = append(result, w)
+		}
+	}
+	return result, nil
+}
+
+type errorWithdrawalRepo struct{}
+
+func (e *errorWithdrawalRepo) CreateWithdrawal(ctx context.Context, userID int64, order string, sum decimal.Decimal) (*models.Withdrawal, error) {
+	return nil, errors.New("database error")
+}
+
+func (e *errorWithdrawalRepo) GetWithdrawalsByUserID(ctx context.Context, userID int64) ([]*models.Withdrawal, error) {
+	return nil, errors.New("database error")
+}
+
+type insufficientFundsWithdrawalRepo struct{}
+
+func (i *insufficientFundsWithdrawalRepo) CreateWithdrawal(ctx context.Context, userID int64, order string, sum decimal.Decimal) (*models.Withdrawal, error) {
+	return nil, storage.ErrInsufficientFunds
+}
+
+func (i *insufficientFundsWithdrawalRepo) GetWithdrawalsByUserID(ctx context.Context, userID int64) ([]*models.Withdrawal, error) {
+	return []*models.Withdrawal{}, nil
+}
+
 func TestRegister(t *testing.T) {
 	repo := newMockUserRepo()
 	orderRepo := newMockOrderRepo()
 	balanceRepo := newMockBalanceRepo()
-	h := NewHandler(repo, orderRepo, balanceRepo, "test-secret")
+	withdrawalRepo := newMockWithdrawalRepo()
+	h := NewHandler(repo, orderRepo, balanceRepo, withdrawalRepo, "test-secret")
 
 	tests := []struct {
 		name       string
@@ -232,7 +291,8 @@ func TestLogin(t *testing.T) {
 	repo := newMockUserRepo()
 	orderRepo := newMockOrderRepo()
 	balanceRepo := newMockBalanceRepo()
-	h := NewHandler(repo, orderRepo, balanceRepo, "test-secret")
+	withdrawalRepo := newMockWithdrawalRepo()
+	h := NewHandler(repo, orderRepo, balanceRepo, withdrawalRepo, "test-secret")
 
 	hash, _ := auth.HashPassword("correctpass")
 	repo.CreateUser(context.Background(), "existinguser", hash)
@@ -292,7 +352,7 @@ func TestLogin(t *testing.T) {
 }
 
 func TestRegister_DatabaseError(t *testing.T) {
-	h := NewHandler(&errorUserRepo{}, &errorOrderRepo{}, &errorBalanceRepo{}, "test-secret")
+	h := NewHandler(&errorUserRepo{}, &errorOrderRepo{}, &errorBalanceRepo{}, &errorWithdrawalRepo{}, "test-secret")
 
 	req := httptest.NewRequest(http.MethodPost, "/api/user/register", strings.NewReader(`{"login":"test","password":"pass"}`))
 	req.Header.Set("Content-Type", "application/json")
@@ -306,7 +366,7 @@ func TestRegister_DatabaseError(t *testing.T) {
 }
 
 func TestLogin_DatabaseError(t *testing.T) {
-	h := NewHandler(&errorUserRepo{}, &errorOrderRepo{}, &errorBalanceRepo{}, "test-secret")
+	h := NewHandler(&errorUserRepo{}, &errorOrderRepo{}, &errorBalanceRepo{}, &errorWithdrawalRepo{}, "test-secret")
 
 	req := httptest.NewRequest(http.MethodPost, "/api/user/login", strings.NewReader(`{"login":"test","password":"pass"}`))
 	req.Header.Set("Content-Type", "application/json")
@@ -323,7 +383,8 @@ func TestUploadOrder(t *testing.T) {
 	userRepo := newMockUserRepo()
 	orderRepo := newMockOrderRepo()
 	balanceRepo := newMockBalanceRepo()
-	h := NewHandler(userRepo, orderRepo, balanceRepo, "test-secret")
+	withdrawalRepo := newMockWithdrawalRepo()
+	h := NewHandler(userRepo, orderRepo, balanceRepo, withdrawalRepo, "test-secret")
 
 	tests := []struct {
 		name       string
@@ -404,7 +465,8 @@ func TestGetOrders(t *testing.T) {
 	userRepo := newMockUserRepo()
 	orderRepo := newMockOrderRepo()
 	balanceRepo := newMockBalanceRepo()
-	h := NewHandler(userRepo, orderRepo, balanceRepo, "test-secret")
+	withdrawalRepo := newMockWithdrawalRepo()
+	h := NewHandler(userRepo, orderRepo, balanceRepo, withdrawalRepo, "test-secret")
 
 	tests := []struct {
 		name          string
@@ -484,7 +546,7 @@ func TestGetOrders(t *testing.T) {
 }
 
 func TestGetOrders_DatabaseError(t *testing.T) {
-	h := NewHandler(&errorUserRepo{}, &errorOrderRepo{}, &errorBalanceRepo{}, "test-secret")
+	h := NewHandler(&errorUserRepo{}, &errorOrderRepo{}, &errorBalanceRepo{}, &errorWithdrawalRepo{}, "test-secret")
 
 	req := httptest.NewRequest(http.MethodGet, "/api/user/orders", nil)
 	ctx := context.WithValue(req.Context(), middleware.UserIDKey, int64(1))
@@ -502,7 +564,8 @@ func TestGetBalance(t *testing.T) {
 	userRepo := newMockUserRepo()
 	orderRepo := newMockOrderRepo()
 	balanceRepo := newMockBalanceRepo()
-	h := NewHandler(userRepo, orderRepo, balanceRepo, "test-secret")
+	withdrawalRepo := newMockWithdrawalRepo()
+	h := NewHandler(userRepo, orderRepo, balanceRepo, withdrawalRepo, "test-secret")
 
 	tests := []struct {
 		name       string
@@ -578,7 +641,7 @@ func TestGetBalance(t *testing.T) {
 }
 
 func TestGetBalance_DatabaseError(t *testing.T) {
-	h := NewHandler(&errorUserRepo{}, &errorOrderRepo{}, &errorBalanceRepo{}, "test-secret")
+	h := NewHandler(&errorUserRepo{}, &errorOrderRepo{}, &errorBalanceRepo{}, &errorWithdrawalRepo{}, "test-secret")
 
 	req := httptest.NewRequest(http.MethodGet, "/api/user/balance", nil)
 	ctx := context.WithValue(req.Context(), middleware.UserIDKey, int64(1))
@@ -586,6 +649,159 @@ func TestGetBalance_DatabaseError(t *testing.T) {
 	w := httptest.NewRecorder()
 
 	h.GetBalance(w, req)
+
+	if w.Code != http.StatusInternalServerError {
+		t.Errorf("Expected status %d, got %d", http.StatusInternalServerError, w.Code)
+	}
+}
+
+func TestWithdraw(t *testing.T) {
+	userRepo := newMockUserRepo()
+	orderRepo := newMockOrderRepo()
+	balanceRepo := newMockBalanceRepo()
+	withdrawalRepo := newMockWithdrawalRepo()
+	h := NewHandler(userRepo, orderRepo, balanceRepo, withdrawalRepo, "test-secret")
+
+	tests := []struct {
+		name       string
+		body       string
+		userID     int64
+		wantStatus int
+	}{
+		{
+			name:       "successful withdrawal",
+			body:       `{"order":"2377225624","sum":100}`,
+			userID:     1,
+			wantStatus: http.StatusOK,
+		},
+		{
+			name:       "insufficient funds",
+			body:       `{"order":"2377225624","sum":2000}`,
+			userID:     1,
+			wantStatus: http.StatusPaymentRequired,
+		},
+		{
+			name:       "invalid order number",
+			body:       `{"order":"1234567890","sum":100}`,
+			userID:     1,
+			wantStatus: http.StatusUnprocessableEntity,
+		},
+		{
+			name:       "invalid json",
+			body:       `{invalid`,
+			userID:     1,
+			wantStatus: http.StatusBadRequest,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			withdrawalRepo.balance = decimal.NewFromFloat(1000)
+			withdrawalRepo.withdrawals = []*models.Withdrawal{}
+
+			req := httptest.NewRequest(http.MethodPost, "/api/user/balance/withdraw", strings.NewReader(tt.body))
+			req.Header.Set("Content-Type", "application/json")
+			ctx := context.WithValue(req.Context(), middleware.UserIDKey, tt.userID)
+			req = req.WithContext(ctx)
+			w := httptest.NewRecorder()
+
+			h.Withdraw(w, req)
+
+			if w.Code != tt.wantStatus {
+				t.Errorf("Withdraw() status = %d, want %d", w.Code, tt.wantStatus)
+			}
+		})
+	}
+}
+
+func TestWithdraw_DatabaseError(t *testing.T) {
+	h := NewHandler(&errorUserRepo{}, &errorOrderRepo{}, &errorBalanceRepo{}, &errorWithdrawalRepo{}, "test-secret")
+
+	req := httptest.NewRequest(http.MethodPost, "/api/user/balance/withdraw", strings.NewReader(`{"order":"2377225624","sum":100}`))
+	req.Header.Set("Content-Type", "application/json")
+	ctx := context.WithValue(req.Context(), middleware.UserIDKey, int64(1))
+	req = req.WithContext(ctx)
+	w := httptest.NewRecorder()
+
+	h.Withdraw(w, req)
+
+	if w.Code != http.StatusInternalServerError {
+		t.Errorf("Expected status %d, got %d", http.StatusInternalServerError, w.Code)
+	}
+}
+
+func TestGetWithdrawals(t *testing.T) {
+	userRepo := newMockUserRepo()
+	orderRepo := newMockOrderRepo()
+	balanceRepo := newMockBalanceRepo()
+	withdrawalRepo := newMockWithdrawalRepo()
+	h := NewHandler(userRepo, orderRepo, balanceRepo, withdrawalRepo, "test-secret")
+
+	tests := []struct {
+		name       string
+		userID     int64
+		wantStatus int
+		setup      func()
+	}{
+		{
+			name:       "no withdrawals",
+			userID:     1,
+			wantStatus: http.StatusNoContent,
+			setup:      func() {},
+		},
+		{
+			name:       "has withdrawals",
+			userID:     1,
+			wantStatus: http.StatusOK,
+			setup: func() {
+				withdrawalRepo.CreateWithdrawal(context.Background(), 1, "2377225624", decimal.NewFromFloat(100))
+				withdrawalRepo.CreateWithdrawal(context.Background(), 1, "79927398713", decimal.NewFromFloat(200))
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			withdrawalRepo.withdrawals = []*models.Withdrawal{}
+			withdrawalRepo.balance = decimal.NewFromFloat(1000)
+			tt.setup()
+
+			req := httptest.NewRequest(http.MethodGet, "/api/user/withdrawals", nil)
+			ctx := context.WithValue(req.Context(), middleware.UserIDKey, tt.userID)
+			req = req.WithContext(ctx)
+			w := httptest.NewRecorder()
+
+			h.GetWithdrawals(w, req)
+
+			if w.Code != tt.wantStatus {
+				t.Errorf("GetWithdrawals() status = %d, want %d", w.Code, tt.wantStatus)
+			}
+
+			if tt.wantStatus == http.StatusOK {
+				contentType := w.Header().Get("Content-Type")
+				if contentType != "application/json" {
+					t.Errorf("GetWithdrawals() Content-Type = %s, want application/json", contentType)
+				}
+			}
+
+			if tt.wantStatus == http.StatusNoContent {
+				if w.Body.Len() != 0 {
+					t.Errorf("GetWithdrawals() body should be empty for 204, got: %s", w.Body.String())
+				}
+			}
+		})
+	}
+}
+
+func TestGetWithdrawals_DatabaseError(t *testing.T) {
+	h := NewHandler(&errorUserRepo{}, &errorOrderRepo{}, &errorBalanceRepo{}, &errorWithdrawalRepo{}, "test-secret")
+
+	req := httptest.NewRequest(http.MethodGet, "/api/user/withdrawals", nil)
+	ctx := context.WithValue(req.Context(), middleware.UserIDKey, int64(1))
+	req = req.WithContext(ctx)
+	w := httptest.NewRecorder()
+
+	h.GetWithdrawals(w, req)
 
 	if w.Code != http.StatusInternalServerError {
 		t.Errorf("Expected status %d, got %d", http.StatusInternalServerError, w.Code)

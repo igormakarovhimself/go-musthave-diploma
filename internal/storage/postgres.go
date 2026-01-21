@@ -149,3 +149,101 @@ func parseDecimal(ns sql.NullString) (decimal.Decimal, error) {
 	}
 	return decimal.NewFromString(ns.String)
 }
+
+func (s *PostgresStorage) calculateLockedBalance(ctx context.Context, tx *sqlx.Tx, userID int64) (decimal.Decimal, error) {
+	_, err := tx.ExecContext(ctx,
+		`SELECT number FROM orders 
+		 WHERE user_id = $1 AND status = 'PROCESSED' FOR UPDATE`, userID)
+	if err != nil {
+		return decimal.Zero, fmt.Errorf("failed to lock orders: %w", err)
+	}
+
+	_, err = tx.ExecContext(ctx,
+		`SELECT id FROM withdrawals 
+		 WHERE user_id = $1 FOR UPDATE`, userID)
+	if err != nil {
+		return decimal.Zero, fmt.Errorf("failed to lock withdrawals: %w", err)
+	}
+
+	var accrualStr string
+	err = tx.QueryRowContext(ctx,
+		`SELECT COALESCE(SUM(accrual), 0)::text FROM orders 
+		 WHERE user_id = $1 AND status = 'PROCESSED'`, userID).Scan(&accrualStr)
+	if err != nil {
+		return decimal.Zero, fmt.Errorf("failed to sum accruals: %w", err)
+	}
+
+	totalAccrual := decimal.Zero
+	if accrualStr != "" && accrualStr != "0" {
+		totalAccrual, err = decimal.NewFromString(accrualStr)
+		if err != nil {
+			return decimal.Zero, fmt.Errorf("failed to parse accrual: %w", err)
+		}
+	}
+
+	var withdrawnStr string
+	err = tx.QueryRowContext(ctx,
+		`SELECT COALESCE(SUM(sum), 0)::text FROM withdrawals 
+		 WHERE user_id = $1`, userID).Scan(&withdrawnStr)
+	if err != nil {
+		return decimal.Zero, fmt.Errorf("failed to sum withdrawals: %w", err)
+	}
+
+	totalWithdrawn := decimal.Zero
+	if withdrawnStr != "" && withdrawnStr != "0" {
+		totalWithdrawn, err = decimal.NewFromString(withdrawnStr)
+		if err != nil {
+			return decimal.Zero, fmt.Errorf("failed to parse withdrawn: %w", err)
+		}
+	}
+
+	return totalAccrual.Sub(totalWithdrawn), nil
+}
+
+func (s *PostgresStorage) CreateWithdrawal(ctx context.Context, userID int64, order string, sum decimal.Decimal) (*models.Withdrawal, error) {
+	tx, err := s.db.BeginTxx(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	currentBalance, err := s.calculateLockedBalance(ctx, tx, userID)
+	if err != nil {
+		return nil, err
+	}
+
+	if currentBalance.LessThan(sum) {
+		return nil, ErrInsufficientFunds
+	}
+
+	query := `INSERT INTO withdrawals (user_id, "order", sum, processed_at)
+			  VALUES ($1, $2, $3, NOW())
+			  RETURNING id, user_id, "order", sum, processed_at`
+
+	var withdrawal models.Withdrawal
+	err = tx.QueryRowxContext(ctx, query, userID, order, sum).StructScan(&withdrawal)
+	if err != nil {
+		return nil, fmt.Errorf("failed to insert withdrawal: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("failed to commit transaction: %w", err)
+	}
+
+	return &withdrawal, nil
+}
+
+func (s *PostgresStorage) GetWithdrawalsByUserID(ctx context.Context, userID int64) ([]*models.Withdrawal, error) {
+	query := `SELECT id, user_id, "order", sum, processed_at 
+			  FROM withdrawals 
+			  WHERE user_id = $1 
+			  ORDER BY processed_at DESC`
+
+	var withdrawals []*models.Withdrawal
+	err := s.db.SelectContext(ctx, &withdrawals, query, userID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get withdrawals: %w", err)
+	}
+
+	return withdrawals, nil
+}

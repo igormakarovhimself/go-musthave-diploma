@@ -43,7 +43,7 @@ func run() error {
 		"address", cfg.RunAddress,
 	)
 
-	router := app.NewRouter(store, store, store, cfg.JWTSecret)
+	router := app.NewRouter(store, store, store, store, cfg.JWTSecret)
 
 	srv := &http.Server{
 		Addr:    cfg.RunAddress,

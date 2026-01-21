@@ -5,6 +5,8 @@ import (
 	"errors"
 
 	"go-musthave-diploma/internal/models"
+
+	"github.com/shopspring/decimal"
 )
 
 var (
@@ -13,6 +15,7 @@ var (
 	ErrOrderExistsSameUser  = errors.New("order already uploaded by this user")
 	ErrOrderExistsOtherUser = errors.New("order already uploaded by another user")
 	ErrOrderNotFound        = errors.New("order not found")
+	ErrInsufficientFunds    = errors.New("insufficient funds")
 )
 
 type UserRepository interface {
@@ -28,4 +31,9 @@ type OrderRepository interface {
 
 type BalanceRepository interface {
 	GetBalance(ctx context.Context, userID int64) (*models.Balance, error)
+}
+
+type WithdrawalRepository interface {
+	CreateWithdrawal(ctx context.Context, userID int64, order string, sum decimal.Decimal) (*models.Withdrawal, error)
+	GetWithdrawalsByUserID(ctx context.Context, userID int64) ([]*models.Withdrawal, error)
 }
