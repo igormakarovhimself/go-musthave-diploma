@@ -247,3 +247,51 @@ func (s *PostgresStorage) GetWithdrawalsByUserID(ctx context.Context, userID int
 
 	return withdrawals, nil
 }
+
+func (s *PostgresStorage) UpdateOrderStatus(ctx context.Context, number string, status string, accrual *decimal.Decimal) error {
+	query := `UPDATE orders 
+			  SET status = $2, accrual = $3
+			  WHERE number = $1 AND status NOT IN ('INVALID', 'PROCESSED')
+			  RETURNING number`
+
+	var returnedNumber string
+	err := s.db.QueryRowContext(ctx, query, number, status, accrual).Scan(&returnedNumber)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil
+		}
+		return fmt.Errorf("failed to update order status: %w", err)
+	}
+
+	return nil
+}
+
+func (s *PostgresStorage) GetNextOrderForProcessing(ctx context.Context) (*models.Order, error) {
+	tx, err := s.db.BeginTxx(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	query := `SELECT number, user_id, status, accrual, uploaded_at
+			  FROM orders
+			  WHERE status IN ('NEW', 'PROCESSING')
+			  ORDER BY uploaded_at ASC
+			  LIMIT 1
+			  FOR UPDATE SKIP LOCKED`
+
+	var order models.Order
+	err = tx.GetContext(ctx, &order, query)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ErrOrderNotFound
+		}
+		return nil, fmt.Errorf("failed to get next order: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("failed to commit transaction: %w", err)
+	}
+
+	return &order, nil
+}

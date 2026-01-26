@@ -109,6 +109,20 @@ func (m *mockOrderRepo) GetOrdersByUserID(ctx context.Context, userID int64) ([]
 	return result, nil
 }
 
+func (m *mockOrderRepo) UpdateOrderStatus(ctx context.Context, number string, status string, accrual *decimal.Decimal) error {
+	order, exists := m.orders[number]
+	if !exists {
+		return storage.ErrOrderNotFound
+	}
+	order.Status = status
+	order.Accrual = accrual
+	return nil
+}
+
+func (m *mockOrderRepo) GetNextOrderForProcessing(ctx context.Context) (*models.Order, error) {
+	return nil, storage.ErrOrderNotFound
+}
+
 type mockBalanceRepo struct {
 	balance *models.Balance
 }
@@ -147,6 +161,14 @@ func (e *errorOrderRepo) GetOrderByNumber(ctx context.Context, orderNumber strin
 }
 
 func (e *errorOrderRepo) GetOrdersByUserID(ctx context.Context, userID int64) ([]*models.Order, error) {
+	return nil, errors.New("database error")
+}
+
+func (e *errorOrderRepo) UpdateOrderStatus(ctx context.Context, number string, status string, accrual *decimal.Decimal) error {
+	return errors.New("database error")
+}
+
+func (e *errorOrderRepo) GetNextOrderForProcessing(ctx context.Context) (*models.Order, error) {
 	return nil, errors.New("database error")
 }
 

@@ -8,6 +8,7 @@ import (
 	"syscall"
 	"time"
 
+	"go-musthave-diploma/internal/accrual"
 	"go-musthave-diploma/internal/app"
 	"go-musthave-diploma/internal/config"
 	"go-musthave-diploma/internal/logger"
@@ -39,6 +40,16 @@ func run() error {
 
 	store := storage.NewPostgresStorage(db)
 
+	var processor *accrual.OrderProcessor
+	if cfg.AccrualSystemAddress != "" {
+		processor = accrual.NewOrderProcessor(store, cfg.AccrualSystemAddress, 5)
+		ctx := context.Background()
+		processor.Start(ctx)
+		logger.Log.Infow("Order processor started", "workers", 5, "accrual_address", cfg.AccrualSystemAddress)
+	} else {
+		logger.Log.Warn("Accrual system address not configured, order processing disabled")
+	}
+
 	logger.Log.Infow("Starting Gophermart",
 		"address", cfg.RunAddress,
 	)
@@ -57,6 +68,10 @@ func run() error {
 	go func() {
 		<-sigint
 		logger.Log.Info("Shutting down server...")
+
+		if processor != nil {
+			processor.Shutdown()
+		}
 
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
