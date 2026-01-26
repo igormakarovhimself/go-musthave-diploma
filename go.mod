@@ -1,6 +1,6 @@
 module go-musthave-diploma
 
-go 1.25.2
+go 1.24.12
 
 require (
 	github.com/go-chi/chi/v5 v5.2.3
