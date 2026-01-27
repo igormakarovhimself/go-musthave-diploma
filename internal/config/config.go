@@ -38,5 +38,9 @@ func Load() (*Config, error) {
 		cfg.JWTSecret = envSecret
 	}
 
+	if cfg.JWTSecret == "" {
+		cfg.JWTSecret = "gophermart-default-secret-key"
+	}
+
 	return cfg, nil
 }
