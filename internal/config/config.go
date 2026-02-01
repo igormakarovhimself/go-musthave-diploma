@@ -3,13 +3,18 @@ package config
 import (
 	"flag"
 	"os"
+	"strconv"
+	"time"
 )
 
 type Config struct {
-	RunAddress           string
-	DatabaseURI          string
-	AccrualSystemAddress string
-	JWTSecret            string
+	RunAddress            string
+	DatabaseURI           string
+	AccrualSystemAddress  string
+	JWTSecret             string
+	AccrualWorkers        int
+	AccrualMaxConcurrency int
+	AccrualCheckInterval  time.Duration
 }
 
 func Load() (*Config, error) {
@@ -40,6 +45,27 @@ func Load() (*Config, error) {
 
 	if cfg.JWTSecret == "" {
 		cfg.JWTSecret = "gophermart-default-secret-key"
+	}
+
+	cfg.AccrualWorkers = 5
+	if envWorkers := os.Getenv("ACCRUAL_WORKERS"); envWorkers != "" {
+		if val, err := strconv.Atoi(envWorkers); err == nil {
+			cfg.AccrualWorkers = val
+		}
+	}
+
+	cfg.AccrualMaxConcurrency = 5
+	if envMaxConcurrency := os.Getenv("ACCRUAL_MAX_CONCURRENCY"); envMaxConcurrency != "" {
+		if val, err := strconv.Atoi(envMaxConcurrency); err == nil {
+			cfg.AccrualMaxConcurrency = val
+		}
+	}
+
+	cfg.AccrualCheckInterval = 1 * time.Second
+	if envInterval := os.Getenv("ACCRUAL_CHECK_INTERVAL"); envInterval != "" {
+		if val, err := time.ParseDuration(envInterval); err == nil {
+			cfg.AccrualCheckInterval = val
+		}
 	}
 
 	return cfg, nil
