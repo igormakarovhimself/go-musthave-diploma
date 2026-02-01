@@ -10,16 +10,18 @@ import (
 	"go-musthave-diploma/internal/logger"
 	"go-musthave-diploma/internal/models"
 	"go-musthave-diploma/internal/storage"
+
+	"golang.org/x/sync/semaphore"
 )
 
 type Worker struct {
 	id            int
 	storage       storage.OrderRepository
 	accrualClient *AccrualClient
-	semaphore     *Semaphore
+	semaphore     *semaphore.Weighted
 }
 
-func NewWorker(id int, storage storage.OrderRepository, client *AccrualClient, sem *Semaphore) *Worker {
+func NewWorker(id int, storage storage.OrderRepository, client *AccrualClient, sem *semaphore.Weighted) *Worker {
 	return &Worker{
 		id:            id,
 		storage:       storage,
@@ -57,8 +59,11 @@ func (w *Worker) processNextOrder(ctx context.Context) {
 
 	logger.Log.Infow("Processing order", "worker_id", w.id, "order_number", order.Number)
 
-	w.semaphore.Acquire()
-	defer w.semaphore.Release()
+	if err := w.semaphore.Acquire(ctx, 1); err != nil {
+		logger.Log.Warnw("Failed to acquire semaphore", "worker_id", w.id, "error", err)
+		return
+	}
+	defer w.semaphore.Release(1)
 
 	if err := w.checkAndUpdateOrder(ctx, order); err != nil {
 		logger.Log.Errorw("Failed to process order", "worker_id", w.id, "order_number", order.Number, "error", err)

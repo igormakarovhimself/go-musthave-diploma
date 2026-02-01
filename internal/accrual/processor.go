@@ -6,6 +6,8 @@ import (
 
 	"go-musthave-diploma/internal/logger"
 	"go-musthave-diploma/internal/storage"
+
+	"golang.org/x/sync/semaphore"
 )
 
 type OrderProcessor struct {
@@ -17,13 +19,13 @@ type OrderProcessor struct {
 	cancel        context.CancelFunc
 }
 
-func NewOrderProcessor(storage storage.OrderRepository, accrualURL string, numWorkers int) *OrderProcessor {
+func NewOrderProcessor(storage storage.OrderRepository, accrualURL string, numWorkers int, maxConcurrency int) *OrderProcessor {
 	client := NewAccrualClient(accrualURL)
-	semaphore := NewSemaphore(3)
+	sem := semaphore.NewWeighted(int64(maxConcurrency))
 
 	workers := make([]*Worker, numWorkers)
 	for i := 0; i < numWorkers; i++ {
-		workers[i] = NewWorker(i+1, storage, client, semaphore)
+		workers[i] = NewWorker(i+1, storage, client, sem)
 	}
 
 	return &OrderProcessor{

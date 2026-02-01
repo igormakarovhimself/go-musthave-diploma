@@ -42,10 +42,10 @@ func run() error {
 
 	var processor *accrual.OrderProcessor
 	if cfg.AccrualSystemAddress != "" {
-		processor = accrual.NewOrderProcessor(store, cfg.AccrualSystemAddress, 5)
+		processor = accrual.NewOrderProcessor(store, cfg.AccrualSystemAddress, cfg.AccrualWorkers, cfg.AccrualMaxConcurrency)
 		ctx := context.Background()
 		processor.Start(ctx)
-		logger.Log.Infow("Order processor started", "workers", 5, "accrual_address", cfg.AccrualSystemAddress)
+		logger.Log.Infow("Order processor started", "workers", cfg.AccrualWorkers, "max_concurrency", cfg.AccrualMaxConcurrency, "accrual_address", cfg.AccrualSystemAddress)
 	} else {
 		logger.Log.Warn("Accrual system address not configured, order processing disabled")
 	}
