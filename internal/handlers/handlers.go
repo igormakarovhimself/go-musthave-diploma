@@ -34,6 +34,15 @@ func NewHandler(userRepo storage.UserRepository, orderRepo storage.OrderReposito
 	}
 }
 
+func (h *Handler) requireUserID(w http.ResponseWriter, r *http.Request) (int64, bool) {
+	userID, err := middleware.GetUserID(r.Context())
+	if err != nil {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return 0, false
+	}
+	return userID, true
+}
+
 type AuthRequest struct {
 	Login    string `json:"login"`
 	Password string `json:"password"`
@@ -104,9 +113,8 @@ func (h *Handler) UploadOrder(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	userID, err := middleware.GetUserID(r.Context())
-	if err != nil {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
+	userID, ok := h.requireUserID(w, r)
+	if !ok {
 		return
 	}
 
@@ -170,9 +178,8 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) GetOrders(w http.ResponseWriter, r *http.Request) {
-	userID, err := middleware.GetUserID(r.Context())
-	if err != nil {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
+	userID, ok := h.requireUserID(w, r)
+	if !ok {
 		return
 	}
 
@@ -193,9 +200,8 @@ func (h *Handler) GetOrders(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) GetBalance(w http.ResponseWriter, r *http.Request) {
-	userID, err := middleware.GetUserID(r.Context())
-	if err != nil {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
+	userID, ok := h.requireUserID(w, r)
+	if !ok {
 		return
 	}
 
@@ -211,9 +217,8 @@ func (h *Handler) GetBalance(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) Withdraw(w http.ResponseWriter, r *http.Request) {
-	userID, err := middleware.GetUserID(r.Context())
-	if err != nil {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
+	userID, ok := h.requireUserID(w, r)
+	if !ok {
 		return
 	}
 
@@ -229,7 +234,7 @@ func (h *Handler) Withdraw(w http.ResponseWriter, r *http.Request) {
 	}
 
 	sum := decimal.NewFromFloat(req.Sum)
-	_, err = h.withdrawalRepo.CreateWithdrawal(r.Context(), userID, req.Order, sum)
+	_, err := h.withdrawalRepo.CreateWithdrawal(r.Context(), userID, req.Order, sum)
 	if err != nil {
 		if errors.Is(err, storage.ErrInsufficientFunds) {
 			http.Error(w, "insufficient funds", http.StatusPaymentRequired)
@@ -244,9 +249,8 @@ func (h *Handler) Withdraw(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) GetWithdrawals(w http.ResponseWriter, r *http.Request) {
-	userID, err := middleware.GetUserID(r.Context())
-	if err != nil {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
+	userID, ok := h.requireUserID(w, r)
+	if !ok {
 		return
 	}
 
