@@ -2,21 +2,22 @@ package accrual
 
 import (
 	"context"
-	"sync"
 
 	"go-musthave-diploma/internal/logger"
 	"go-musthave-diploma/internal/storage"
 
+	"golang.org/x/sync/errgroup"
 	"golang.org/x/sync/semaphore"
 )
 
 type OrderProcessor struct {
 	workers       []*Worker
-	wg            *sync.WaitGroup
 	accrualClient *AccrualClient
 	storage       storage.OrderRepository
 	numWorkers    int
-	cancel        context.CancelFunc
+	group         *errgroup.Group
+	groupCtx      context.Context
+	cancelFunc    context.CancelFunc
 }
 
 func NewOrderProcessor(storage storage.OrderRepository, accrualURL string, numWorkers int, maxConcurrency int) *OrderProcessor {
@@ -30,7 +31,6 @@ func NewOrderProcessor(storage storage.OrderRepository, accrualURL string, numWo
 
 	return &OrderProcessor{
 		workers:       workers,
-		wg:            &sync.WaitGroup{},
 		accrualClient: client,
 		storage:       storage,
 		numWorkers:    numWorkers,
@@ -39,14 +39,18 @@ func NewOrderProcessor(storage storage.OrderRepository, accrualURL string, numWo
 
 func (p *OrderProcessor) Start(ctx context.Context) {
 	ctx, cancel := context.WithCancel(ctx)
-	p.cancel = cancel
+	p.cancelFunc = cancel
+
+	g, gCtx := errgroup.WithContext(ctx)
+	p.group = g
+	p.groupCtx = gCtx
 
 	for _, worker := range p.workers {
-		p.wg.Add(1)
-		go func(w *Worker) {
-			defer p.wg.Done()
-			w.Run(ctx)
-		}(worker)
+		w := worker
+		g.Go(func() error {
+			w.Run(gCtx)
+			return nil
+		})
 	}
 
 	logger.Log.Infow("Order processor started", "num_workers", p.numWorkers)
@@ -55,11 +59,15 @@ func (p *OrderProcessor) Start(ctx context.Context) {
 func (p *OrderProcessor) Shutdown() {
 	logger.Log.Info("Shutting down order processor...")
 
-	if p.cancel != nil {
-		p.cancel()
+	if p.cancelFunc != nil {
+		p.cancelFunc()
 	}
 
-	p.wg.Wait()
+	if p.group != nil {
+		if err := p.group.Wait(); err != nil {
+			logger.Log.Errorw("Error during processor shutdown", "error", err)
+		}
+	}
 
 	logger.Log.Info("Order processor stopped")
 }
