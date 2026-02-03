@@ -34,12 +34,12 @@ func (w *Worker) Run(ctx context.Context) {
 	ticker := time.NewTicker(1 * time.Second)
 	defer ticker.Stop()
 
-	logger.Log.Infow("Worker started", "worker_id", w.id)
+	logger.Log.Info("Worker started", "worker_id", w.id)
 
 	for {
 		select {
 		case <-ctx.Done():
-			logger.Log.Infow("Worker stopped", "worker_id", w.id)
+			logger.Log.Info("Worker stopped", "worker_id", w.id)
 			return
 		case <-ticker.C:
 			w.processNextOrder(ctx)
@@ -53,20 +53,20 @@ func (w *Worker) processNextOrder(ctx context.Context) {
 		if errors.Is(err, storage.ErrOrderNotFound) {
 			return
 		}
-		logger.Log.Errorw("Failed to get next order", "worker_id", w.id, "error", err)
+		logger.Log.Error("Failed to get next order", "worker_id", w.id, "error", err)
 		return
 	}
 
-	logger.Log.Infow("Processing order", "worker_id", w.id, "order_number", order.Number)
+	logger.Log.Info("Processing order", "worker_id", w.id, "order_number", order.Number)
 
 	if err := w.semaphore.Acquire(ctx, 1); err != nil {
-		logger.Log.Warnw("Failed to acquire semaphore", "worker_id", w.id, "error", err)
+		logger.Log.Warn("Failed to acquire semaphore", "worker_id", w.id, "error", err)
 		return
 	}
 	defer w.semaphore.Release(1)
 
 	if err := w.checkAndUpdateOrder(ctx, order); err != nil {
-		logger.Log.Errorw("Failed to process order", "worker_id", w.id, "order_number", order.Number, "error", err)
+		logger.Log.Error("Failed to process order", "worker_id", w.id, "order_number", order.Number, "error", err)
 	}
 }
 
@@ -76,30 +76,30 @@ func (w *Worker) checkAndUpdateOrder(ctx context.Context, order *models.Order) e
 	for attempt := 0; attempt < maxRetries; attempt++ {
 		if attempt > 0 {
 			backoff := time.Duration(math.Pow(2, float64(attempt))) * time.Second
-			logger.Log.Infow("Retrying after backoff", "worker_id", w.id, "order_number", order.Number, "attempt", attempt, "backoff", backoff)
+			logger.Log.Info("Retrying after backoff", "worker_id", w.id, "order_number", order.Number, "attempt", attempt, "backoff", backoff)
 			time.Sleep(backoff)
 		}
 
 		resp, statusCode, err := w.accrualClient.GetOrder(ctx, order.Number)
 
 		if err != nil && statusCode == http.StatusTooManyRequests {
-			logger.Log.Warnw("Rate limited, waiting", "worker_id", w.id, "order_number", order.Number)
+			logger.Log.Warn("Rate limited, waiting", "worker_id", w.id, "order_number", order.Number)
 			time.Sleep(60 * time.Second)
 			continue
 		}
 
 		if err != nil && statusCode == http.StatusInternalServerError {
-			logger.Log.Warnw("Accrual server error", "worker_id", w.id, "order_number", order.Number, "attempt", attempt+1)
+			logger.Log.Warn("Accrual server error", "worker_id", w.id, "order_number", order.Number, "attempt", attempt+1)
 			continue
 		}
 
 		if err != nil {
-			logger.Log.Errorw("Failed to get order from accrual", "worker_id", w.id, "order_number", order.Number, "error", err)
+			logger.Log.Error("Failed to get order from accrual", "worker_id", w.id, "order_number", order.Number, "error", err)
 			return err
 		}
 
 		if statusCode == http.StatusNoContent {
-			logger.Log.Infow("Order not registered in accrual", "worker_id", w.id, "order_number", order.Number)
+			logger.Log.Info("Order not registered in accrual", "worker_id", w.id, "order_number", order.Number)
 			return nil
 		}
 
@@ -110,7 +110,7 @@ func (w *Worker) checkAndUpdateOrder(ctx context.Context, order *models.Order) e
 		return nil
 	}
 
-	logger.Log.Warnw("Max retries exceeded", "worker_id", w.id, "order_number", order.Number)
+	logger.Log.Warn("Max retries exceeded", "worker_id", w.id, "order_number", order.Number)
 	return errors.New("max retries exceeded")
 }
 
@@ -127,7 +127,7 @@ func (w *Worker) updateOrderFromResponse(ctx context.Context, number string, res
 	case "PROCESSED":
 		newStatus = models.OrderStatusProcessed
 	default:
-		logger.Log.Warnw("Unknown status from accrual", "status", resp.Status, "order_number", number)
+		logger.Log.Warn("Unknown status from accrual", "status", resp.Status, "order_number", number)
 		return nil
 	}
 
@@ -136,6 +136,6 @@ func (w *Worker) updateOrderFromResponse(ctx context.Context, number string, res
 		return err
 	}
 
-	logger.Log.Infow("Order updated", "worker_id", w.id, "order_number", number, "status", newStatus, "accrual", resp.Accrual)
+	logger.Log.Info("Order updated", "worker_id", w.id, "order_number", number, "status", newStatus, "accrual", resp.Accrual)
 	return nil
 }

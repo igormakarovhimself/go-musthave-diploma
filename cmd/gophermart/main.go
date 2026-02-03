@@ -30,7 +30,6 @@ func run() error {
 	if err := logger.Initialize("info"); err != nil {
 		return err
 	}
-	defer logger.Log.Sync()
 
 	db, err := storage.InitDB(cfg.DatabaseURI)
 	if err != nil {
@@ -45,12 +44,12 @@ func run() error {
 		processor = accrual.NewOrderProcessor(store, cfg.AccrualSystemAddress, cfg.AccrualWorkers, cfg.AccrualMaxConcurrency)
 		ctx := context.Background()
 		processor.Start(ctx)
-		logger.Log.Infow("Order processor started", "workers", cfg.AccrualWorkers, "max_concurrency", cfg.AccrualMaxConcurrency, "accrual_address", cfg.AccrualSystemAddress)
+		logger.Log.Info("Order processor started", "workers", cfg.AccrualWorkers, "max_concurrency", cfg.AccrualMaxConcurrency, "accrual_address", cfg.AccrualSystemAddress)
 	} else {
 		logger.Log.Warn("Accrual system address not configured, order processing disabled")
 	}
 
-	logger.Log.Infow("Starting Gophermart",
+	logger.Log.Info("Starting Gophermart",
 		"address", cfg.RunAddress,
 	)
 
@@ -77,13 +76,13 @@ func run() error {
 		defer cancel()
 
 		if err := srv.Shutdown(ctx); err != nil {
-			logger.Log.Errorw("Server shutdown error", "error", err)
+			logger.Log.Error("Server shutdown error", "error", err)
 		}
 
 		close(idleConnsClosed)
 	}()
 
-	logger.Log.Infow("Server started", "address", cfg.RunAddress)
+	logger.Log.Info("Server started", "address", cfg.RunAddress)
 
 	if err := srv.ListenAndServe(); err != http.ErrServerClosed {
 		return err

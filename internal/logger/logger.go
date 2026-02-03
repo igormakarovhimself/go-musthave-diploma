@@ -1,26 +1,36 @@
 package logger
 
 import (
-	"go.uber.org/zap"
+	"log/slog"
+	"os"
 )
 
-var Log *zap.SugaredLogger
+var Log *slog.Logger
 
 func Initialize(level string) error {
-	var logger *zap.Logger
-	var err error
+	var logLevel slog.Level
 
 	switch level {
 	case "debug":
-		logger, err = zap.NewDevelopment()
+		logLevel = slog.LevelDebug
+	case "info":
+		logLevel = slog.LevelInfo
+	case "warn":
+		logLevel = slog.LevelWarn
+	case "error":
+		logLevel = slog.LevelError
 	default:
-		logger, err = zap.NewProduction()
+		logLevel = slog.LevelInfo
 	}
 
-	if err != nil {
-		return err
+	opts := &slog.HandlerOptions{
+		Level: logLevel,
 	}
 
-	Log = logger.Sugar()
+	handler := slog.NewJSONHandler(os.Stdout, opts)
+	Log = slog.New(handler)
+
+	slog.SetDefault(Log)
+
 	return nil
 }

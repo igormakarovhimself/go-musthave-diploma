@@ -53,7 +53,7 @@ func (p *OrderProcessor) Start(ctx context.Context) {
 		})
 	}
 
-	logger.Log.Infow("Order processor started", "num_workers", p.numWorkers)
+	logger.Log.Info("Order processor started", "num_workers", p.numWorkers)
 }
 
 func (p *OrderProcessor) Shutdown() {
@@ -65,7 +65,7 @@ func (p *OrderProcessor) Shutdown() {
 
 	if p.group != nil {
 		if err := p.group.Wait(); err != nil {
-			logger.Log.Errorw("Error during processor shutdown", "error", err)
+			logger.Log.Error("Error during processor shutdown", "error", err)
 		}
 	}
 
